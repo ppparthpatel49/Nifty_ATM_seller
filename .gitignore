@@ -1,0 +1,32 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg
+
+# ---- Virtual Environment ----
+.venv/
+venv/
+env/
+
+# ---- Logs ----
+*.log
+nifty_bot.log
+
+# ---- IDE ----
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+
+# ---- SECRETS — NEVER PUSH THESE ----
+config_secret.py
+.env
