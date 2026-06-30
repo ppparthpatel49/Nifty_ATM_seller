@@ -1,0 +1,61 @@
+name: Nifty ATM Option Bot
+
+on:
+  # ---- SCHEDULED RUNS (Mon-Fri during market hours) ----
+  schedule:
+    # Cron is in UTC. IST = UTC + 5:30
+    # Market: 9:15 AM - 3:30 PM IST = 3:45 AM - 10:00 AM UTC
+    #
+    # Run every 5 minutes from 3:45 AM to 10:00 AM UTC, Mon-Fri
+    - cron: "*/5 3-10 * * 1-5"
+
+  # ---- MANUAL RUN (for testing) ----
+  workflow_dispatch:
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6    # Each run = 1 scan cycle (< 1 min), buffer for safety
+
+    steps:
+      - name: 📥 Checkout code
+        uses: actions/checkout@v4
+
+      - name: 🐍 Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 📦 Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: 🕐 Check if market is open (IST)
+        id: market_check
+        run: |
+          python3 -c "
+          from datetime import datetime, timezone, timedelta
+          ist = timezone(timedelta(hours=5, minutes=30))
+          now = datetime.now(ist)
+          hour = now.hour
+          minute = now.minute
+          weekday = now.weekday()
+          
+          # Market: Mon-Fri, 9:15 AM - 3:30 PM IST
+          is_open = (weekday < 5 and 
+                     ((hour == 9 and minute >= 15) or 
+                      (10 <= hour <= 14) or 
+                      (hour == 15 and minute <= 30)))
+          
+          print(f'IST Time: {now.strftime(\"%Y-%m-%d %H:%M:%S\")}')
+          print(f'Market open: {is_open}')
+          
+          with open('$GITHUB_OUTPUT', 'a') as f:
+              f.write(f'is_open={str(is_open).lower()}\n')
+          "
+
+      - name: 🤖 Run single scan cycle
+        if: steps.market_check.outputs.is_open == 'true'
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python scan_once.py
