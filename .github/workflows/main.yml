@@ -33,7 +33,9 @@ jobs:
         id: market_check
         run: |
           python3 -c "
+          import os
           from datetime import datetime, timezone, timedelta
+          
           ist = timezone(timedelta(hours=5, minutes=30))
           now = datetime.now(ist)
           hour = now.hour
@@ -49,7 +51,9 @@ jobs:
           print(f'IST Time: {now.strftime(\"%Y-%m-%d %H:%M:%S\")}')
           print(f'Market open: {is_open}')
           
-          with open('$GITHUB_OUTPUT', 'a') as f:
+          # FIX: Read the path from environment variables properly
+          env_file = os.getenv('GITHUB_OUTPUT')
+          with open(env_file, 'a') as f:
               f.write(f'is_open={str(is_open).lower()}\n')
           "
 
