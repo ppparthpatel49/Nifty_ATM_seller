@@ -1,20 +1,20 @@
 name: Nifty ATM Option Bot
 
 on:
-  # Scheduled runs are in UTC. IST = UTC + 5:30
-  # NSE market hours: 09:15-15:30 IST = 03:45-10:00 UTC
+  # GitHub cron uses UTC.
+  # This triggers the workflow every 5 minutes on weekdays.
+  # The Python market check below decides whether scan_once.py should actually run.
   schedule:
-    # 09:15, 09:20, 09:25 IST
-    - cron: "45-59/5 3 * * 1-5"
+    - cron: "*/5 * * * 1-5"
 
-    # 09:30 to 14:55 IST, every 5 minutes
-    - cron: "*/5 4-9 * * 1-5"
-
-    # 15:30 IST final scan
-    - cron: "0 10 * * 1-5"
-
-  # Manual run for testing
+  # Manual run for testing.
   workflow_dispatch:
+    inputs:
+      force_run:
+        description: "Run scan_once.py even if market is closed"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -30,25 +30,11 @@ jobs:
     timeout-minutes: 6
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: "pip"
-
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
       - name: Check if market is open IST
         id: market_check
         shell: bash
         run: |
-          python - << 'EOF'
+          python3 - << 'EOF'
           import os
           from datetime import datetime, timezone, timedelta
 
@@ -56,11 +42,12 @@ jobs:
           now = datetime.now(ist)
 
           weekday = now.weekday()  # Monday = 0, Sunday = 6
-          minutes_now = now.hour * 60 + now.minute
-          market_open = 9 * 60 + 15
-          market_close = 15 * 60 + 30
+          current_minutes = now.hour * 60 + now.minute
 
-          is_open = weekday < 5 and market_open <= minutes_now <= market_close
+          market_open = 9 * 60 + 15    # 09:15 IST
+          market_close = 15 * 60 + 30  # 15:30 IST
+
+          is_open = weekday < 5 and market_open <= current_minutes <= market_close
 
           print(f"IST Time: {now.strftime('%Y-%m-%d %H:%M:%S')}")
           print(f"Market open: {is_open}")
@@ -69,8 +56,25 @@ jobs:
               f.write(f"is_open={str(is_open).lower()}\n")
           EOF
 
+      - name: Checkout code
+        if: ${{ steps.market_check.outputs.is_open == 'true' || inputs.force_run == true }}
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        if: ${{ steps.market_check.outputs.is_open == 'true' || inputs.force_run == true }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        if: ${{ steps.market_check.outputs.is_open == 'true' || inputs.force_run == true }}
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
       - name: Run single scan cycle
-        if: ${{ steps.market_check.outputs.is_open == 'true' }}
+        if: ${{ steps.market_check.outputs.is_open == 'true' || inputs.force_run == true }}
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
