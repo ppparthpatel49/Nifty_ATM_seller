@@ -3,7 +3,6 @@
 #  🤖 SINGLE SCAN — For GitHub Actions / Cron Jobs
 #
 #  Runs ONE scan cycle: fetch data → check signals → send Telegram if triggered.
-#  Designed for scheduled runners (GitHub Actions, cron, etc.)
 #
 #  Usage: python scan_once.py
 # ============================================================================
@@ -15,7 +14,7 @@ import sys
 from datetime import datetime
 
 import config
-from data_fetcher import NSEFetcher
+from data_fetcher import DataFetcher
 from strategy import StrategyEngine, PivotCalculator
 from telegram_sender import TelegramBot
 
@@ -26,12 +25,10 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ---- State file to persist trade state between runs ----
 STATE_FILE = "bot_state.json"
 
 
 def load_state() -> dict:
-    """Load saved state from previous run."""
     if os.path.exists(STATE_FILE):
         try:
             with open(STATE_FILE, "r") as f:
@@ -39,21 +36,14 @@ def load_state() -> dict:
         except:
             pass
     return {
-        "trade_type": 0,
-        "trade_entry": None,
-        "trade_sl": None,
-        "trade_strike": None,
-        "daily_trades": 0,
-        "daily_pnl": 0.0,
-        "total_wins": 0,
-        "total_losses": 0,
-        "last_signal": None,
+        "trade_type": 0, "trade_entry": None, "trade_sl": None,
+        "trade_strike": None, "daily_trades": 0, "daily_pnl": 0.0,
+        "total_wins": 0, "total_losses": 0, "last_signal": None,
         "last_date": None,
     }
 
 
 def save_state(state: dict):
-    """Save state for next run."""
     with open(STATE_FILE, "w") as f:
         json.dump(state, f, indent=2)
 
@@ -64,23 +54,22 @@ def main():
     logger.info("=" * 50)
 
     # ---- Validate credentials ----
-    if not config.TELEGRAM_BOT_TOKEN or config.TELEGRAM_BOT_TOKEN == "YOUR_BOT_TOKEN_HERE":
-        logger.error("❌ TELEGRAM_BOT_TOKEN not set! Add it to GitHub Secrets or .env file.")
+    if not config.TELEGRAM_BOT_TOKEN or "YOUR" in config.TELEGRAM_BOT_TOKEN:
+        logger.error("❌ TELEGRAM_BOT_TOKEN not set!")
         sys.exit(1)
-    if not config.TELEGRAM_CHAT_ID or config.TELEGRAM_CHAT_ID == "YOUR_CHAT_ID_HERE":
-        logger.error("❌ TELEGRAM_CHAT_ID not set! Add it to GitHub Secrets or .env file.")
+    if not config.TELEGRAM_CHAT_ID or "YOUR" in config.TELEGRAM_CHAT_ID:
+        logger.error("❌ TELEGRAM_CHAT_ID not set!")
         sys.exit(1)
 
     # ---- Initialize ----
     telegram = TelegramBot(config.TELEGRAM_BOT_TOKEN, config.TELEGRAM_CHAT_ID)
-    nse = NSEFetcher()
+    fetcher = DataFetcher()
     strategy = StrategyEngine(config)
 
-    # ---- Load previous state ----
+    # ---- Load state ----
     state = load_state()
     today = datetime.now().strftime("%Y-%m-%d")
 
-    # Reset daily counters if new day
     if state["last_date"] != today:
         state["daily_trades"] = 0
         state["daily_pnl"] = 0.0
@@ -98,7 +87,7 @@ def main():
     strategy.total_losses = state["total_losses"]
 
     # ---- Get pivot points ----
-    prev_hlc = nse.get_previous_day_hlc()
+    prev_hlc = fetcher.get_previous_day_hlc()
     if not prev_hlc:
         logger.error("❌ Could not get previous day HLC. Exiting.")
         sys.exit(1)
@@ -107,13 +96,13 @@ def main():
     logger.info(f"Pivots: R1={pivots['R1']} | PP={pivots['PP']} | S1={pivots['S1']}")
 
     # ---- Get 5-min candles ----
-    df = nse.get_5min_candles(days=3)
+    df = fetcher.get_5min_candles(days=3)
     if df.empty:
-        logger.warning("No candle data available. Exiting.")
+        logger.warning("No candle data. Exiting.")
         sys.exit(0)
 
     # ---- Get VIX ----
-    vix = nse.get_india_vix()
+    vix = fetcher.get_india_vix()
 
     # ---- Run strategy ----
     result = strategy.process_candle(df, pivots, vix)
@@ -138,9 +127,8 @@ def main():
         f"Signal: {signal or 'None'}"
     )
 
-    # ---- Send Telegram if signal ----
+    # ---- Send Telegram ----
     if signal and signal != state["last_signal"]:
-
         if signal == "SELL_PUT":
             telegram.send_sell_put_signal(
                 spot=spot, atm_strike=atm, r1=pivots["R1"],
@@ -186,7 +174,7 @@ def main():
     else:
         logger.info("No new signal.")
 
-    # ---- Save state for next run ----
+    # ---- Save state ----
     state["trade_type"] = strategy.trade_type
     state["trade_entry"] = strategy.trade_entry
     state["trade_sl"] = strategy.trade_sl
@@ -198,7 +186,7 @@ def main():
     state["last_date"] = today
 
     save_state(state)
-    logger.info(f"State saved. Done. ✅")
+    logger.info("State saved. Done. ✅")
 
 
 if __name__ == "__main__":
