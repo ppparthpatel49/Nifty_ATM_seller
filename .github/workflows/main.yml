@@ -1,20 +1,28 @@
 name: Nifty ATM Option Bot
 
 on:
-  # GitHub cron uses UTC.
-  # This triggers the workflow every 5 minutes on weekdays.
-  # The Python market check below decides whether scan_once.py should actually run.
+  # IMPORTANT:
+  # GitHub scheduled cron is not reliable for exact every-5-minute triggers.
+  # So this workflow starts only 2 times per market day and then runs an internal
+  # Python loop that calls scan_once.py every 5 minutes during market hours.
   schedule:
-    - cron: "*/5 * * * 1-5"
+    # 09:15 IST = 03:45 UTC, first market session
+    - cron: "45 3 * * 1-5"
 
-  # Manual run for testing.
+    # 12:15 IST = 06:45 UTC, second session refresh
+    # This cancels/replaces the first run and continues until market close.
+    - cron: "45 6 * * 1-5"
+
   workflow_dispatch:
     inputs:
-      force_run:
-        description: "Run scan_once.py even if market is closed"
-        required: false
-        default: false
-        type: boolean
+      run_mode:
+        description: "single = run once now, session = keep running every 5 minutes during market hours"
+        required: true
+        default: "single"
+        type: choice
+        options:
+          - single
+          - session
 
 permissions:
   contents: read
@@ -25,57 +33,122 @@ concurrency:
 
 jobs:
   run-bot:
-    name: Run Nifty ATM Option Scan
+    name: Run Nifty ATM Option Bot
     runs-on: ubuntu-latest
-    timeout-minutes: 6
+    timeout-minutes: 360
+
+    env:
+      TZ: Asia/Kolkata
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      RUN_MODE: ${{ github.event_name == 'schedule' && 'session' || inputs.run_mode }}
 
     steps:
-      - name: Check if market is open IST
-        id: market_check
-        shell: bash
-        run: |
-          python3 - << 'EOF'
-          import os
-          from datetime import datetime, timezone, timedelta
-
-          ist = timezone(timedelta(hours=5, minutes=30))
-          now = datetime.now(ist)
-
-          weekday = now.weekday()  # Monday = 0, Sunday = 6
-          current_minutes = now.hour * 60 + now.minute
-
-          market_open = 9 * 60 + 15    # 09:15 IST
-          market_close = 15 * 60 + 30  # 15:30 IST
-
-          is_open = weekday < 5 and market_open <= current_minutes <= market_close
-
-          print(f"IST Time: {now.strftime('%Y-%m-%d %H:%M:%S')}")
-          print(f"Market open: {is_open}")
-
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
-              f.write(f"is_open={str(is_open).lower()}\n")
-          EOF
-
       - name: Checkout code
-        if: ${{ steps.market_check.outputs.is_open == 'true' || inputs.force_run == true }}
         uses: actions/checkout@v4
 
       - name: Setup Python
-        if: ${{ steps.market_check.outputs.is_open == 'true' || inputs.force_run == true }}
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
           cache: "pip"
 
       - name: Install dependencies
-        if: ${{ steps.market_check.outputs.is_open == 'true' || inputs.force_run == true }}
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run single scan cycle
-        if: ${{ steps.market_check.outputs.is_open == 'true' || inputs.force_run == true }}
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-        run: python scan_once.py
+      - name: Run bot session
+        shell: bash
+        run: |
+          python - << 'EOF'
+          import os
+          import sys
+          import time
+          import subprocess
+          from datetime import datetime, timezone, timedelta
+
+          IST = timezone(timedelta(hours=5, minutes=30))
+          RUN_MODE = os.getenv("RUN_MODE", "single")
+
+          MARKET_OPEN_MINUTES = 9 * 60 + 15
+          MARKET_CLOSE_MINUTES = 15 * 60 + 30
+
+          def now_ist():
+              return datetime.now(IST)
+
+          def minutes_of_day(dt):
+              return dt.hour * 60 + dt.minute
+
+          def is_weekday(dt):
+              return dt.weekday() < 5
+
+          def is_market_open(dt):
+              return is_weekday(dt) and MARKET_OPEN_MINUTES <= minutes_of_day(dt) <= MARKET_CLOSE_MINUTES
+
+          def seconds_until_market_open(dt):
+              current = minutes_of_day(dt)
+              target = MARKET_OPEN_MINUTES
+              seconds = (target - current) * 60 - dt.second
+              return max(seconds, 0)
+
+          def seconds_until_next_5_min_boundary(dt):
+              # Align scans to clean 5-minute marks like 09:15, 09:20, 09:25, etc.
+              seconds_since_hour = dt.minute * 60 + dt.second
+              next_boundary = ((seconds_since_hour // 300) + 1) * 300
+              return max(next_boundary - seconds_since_hour, 1)
+
+          def run_scan():
+              started = now_ist()
+              print(f"\n--- Running scan_once.py at {started.strftime('%Y-%m-%d %H:%M:%S')} IST ---", flush=True)
+              result = subprocess.run([sys.executable, "scan_once.py"])
+              ended = now_ist()
+              print(f"--- scan_once.py finished with exit code {result.returncode} at {ended.strftime('%Y-%m-%d %H:%M:%S')} IST ---", flush=True)
+              return result.returncode
+
+          print(f"RUN_MODE: {RUN_MODE}", flush=True)
+          print(f"Current IST time: {now_ist().strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+
+          # Manual testing mode: run once immediately, even outside market hours.
+          if RUN_MODE == "single":
+              sys.exit(run_scan())
+
+          # Scheduled/session mode: keep process alive and scan every 5 minutes during market hours.
+          failure_count = 0
+
+          while True:
+              now = now_ist()
+              current_minutes = minutes_of_day(now)
+
+              print(f"Heartbeat IST: {now.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+
+              if not is_weekday(now):
+                  print("Today is not a weekday. Exiting.", flush=True)
+                  break
+
+              if current_minutes < MARKET_OPEN_MINUTES:
+                  sleep_seconds = seconds_until_market_open(now)
+                  print(f"Market not open yet. Sleeping {sleep_seconds} seconds.", flush=True)
+                  time.sleep(sleep_seconds)
+                  continue
+
+              if current_minutes > MARKET_CLOSE_MINUTES:
+                  print("Market closed. Exiting bot session.", flush=True)
+                  break
+
+              code = run_scan()
+              if code != 0:
+                  failure_count += 1
+                  print(f"Warning: scan failed. Failure count: {failure_count}", flush=True)
+
+              now = now_ist()
+              if minutes_of_day(now) >= MARKET_CLOSE_MINUTES:
+                  print("Market close reached after scan. Exiting.", flush=True)
+                  break
+
+              sleep_seconds = seconds_until_next_5_min_boundary(now)
+              print(f"Sleeping {sleep_seconds} seconds until next 5-minute scan slot.", flush=True)
+              time.sleep(sleep_seconds)
+
+          print(f"Bot session ended. Total scan failures during this session: {failure_count}", flush=True)
+          EOF
