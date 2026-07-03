@@ -59,7 +59,7 @@ class SuperTrendCalculator:
                     direction.iloc[i] = -1  # Bearish
                     supertrend.iloc[i] = upper_band.iloc[i]
                 else:
-                    direction.iloc[i] = 1   # Bullish
+                    direction.iloc[i] = 1  # Bullish
                     supertrend.iloc[i] = lower_band.iloc[i]
             else:
                 prev_dir = direction.iloc[i-1]
@@ -97,8 +97,12 @@ class PivotCalculator:
         s3 = prev_low - 2 * (prev_high - pp)
         return {
             'PP': round(pp, 2),
-            'R1': round(r1, 2), 'R2': round(r2, 2), 'R3': round(r3, 2),
-            'S1': round(s1, 2), 'S2': round(s2, 2), 'S3': round(s3, 2),
+            'R1': round(r1, 2),
+            'R2': round(r2, 2),
+            'R3': round(r3, 2),
+            'S1': round(s1, 2),
+            'S2': round(s2, 2),
+            'S3': round(s3, 2),
         }
 
 
@@ -111,14 +115,11 @@ class VWAPCalculator:
         df['date'] = df['datetime'].dt.date
         df['typical_price'] = (df['high'] + df['low'] + df['close']) / 3
         df['tp_volume'] = df['typical_price'] * df['volume']
-
         # Cumulative within each day
         df['cum_tp_vol'] = df.groupby('date')['tp_volume'].cumsum()
         df['cum_vol'] = df.groupby('date')['volume'].cumsum()
         df['vwap'] = df['cum_tp_vol'] / df['cum_vol'].replace(0, np.nan)
-
-        df.drop(columns=['date', 'typical_price', 'tp_volume', 'cum_tp_vol', 'cum_vol'],
-                inplace=True)
+        df.drop(columns=['date', 'typical_price', 'tp_volume', 'cum_tp_vol', 'cum_vol'], inplace=True)
         return df
 
 
@@ -135,7 +136,7 @@ class StrategyEngine:
         self.vwap_calc = VWAPCalculator()
 
         # Trade state
-        self.trade_type = 0       # 0=flat, 1=short PUT, -1=short CALL
+        self.trade_type = 0  # 0=flat, 1=short PUT, -1=short CALL
         self.trade_entry = None
         self.trade_sl = None
         self.trade_strike = None
@@ -161,9 +162,7 @@ class StrategyEngine:
     def process_candle(self, df: pd.DataFrame, pivots: dict, vix: float) -> dict:
         """
         Process the latest candle and return signal info.
-
-        Returns dict:
-        {
+        Returns dict: {
             'signal': 'SELL_PUT' | 'SELL_CALL' | 'EXIT_PUT' | 'EXIT_CALL' | 'FORCE_EXIT' | None,
             'spot': float,
             'atm_strike': int,
@@ -192,14 +191,12 @@ class StrategyEngine:
         spot = float(latest['close'])
         prev_close = float(prev['close'])
         st_value = float(latest['st_value'])
-        st_dir = int(latest['st_direction'])      # 1=Bull, -1=Bear
+        st_dir = int(latest['st_direction'])  # 1=Bull, -1=Bear
         prev_st_dir = int(prev['st_direction'])
         vwap = float(latest['vwap']) if not np.isnan(latest['vwap']) else spot
         volume = float(latest['volume'])
         avg_vol = float(df['volume'].tail(20).mean())
-
         atm_strike = self.get_atm_strike(spot)
-
         R1 = pivots['R1']
         S1 = pivots['S1']
 
@@ -207,25 +204,18 @@ class StrategyEngine:
         current_time = latest['datetime']
         no_trade_h, no_trade_m = map(int, self.config.NO_TRADE_AFTER.split(':'))
         exit_h, exit_m = map(int, self.config.FORCE_EXIT_TIME.split(':'))
-
         current_hour = current_time.hour
         current_min = current_time.minute
-
-        no_new_trade = (current_hour > no_trade_h or
-                        (current_hour == no_trade_h and current_min >= no_trade_m))
-        force_exit_time = (current_hour > exit_h or
-                           (current_hour == exit_h and current_min >= exit_m))
+        no_new_trade = (current_hour > no_trade_h or (current_hour == no_trade_h and current_min >= no_trade_m))
+        force_exit_time = (current_hour > exit_h or (current_hour == exit_h and current_min >= exit_m))
 
         # ---- Breakout detection ----
-        # cross_above_r1 = spot > R1 and prev_close <= R1
-        # cross_below_s1 = spot < S1 and prev_close >= S1
         cross_above_r1 = spot > R1
         cross_below_s1 = spot < S1
 
         # ---- SuperTrend flip detection ----
         st_flip_bear = st_dir == -1 and prev_st_dir == 1
         st_flip_bull = st_dir == 1 and prev_st_dir == -1
-
         is_bull_st = st_dir == 1
         is_bear_st = st_dir == -1
 
@@ -234,14 +224,11 @@ class StrategyEngine:
         vwap_bear_ok = (not self.config.USE_VWAP_FILTER) or (spot < vwap)
         vol_ok = (not self.config.USE_VOLUME_FILTER) or (volume >= avg_vol * self.config.VOLUME_MULTIPLIER)
         vix_ok = (not self.config.USE_VIX_FILTER) or (self.config.VIX_MIN <= vix <= self.config.VIX_MAX)
-
-        can_trade = (self.daily_trades < self.config.MAX_TRADES_PER_DAY and
-                     not no_new_trade and vix_ok)
+        can_trade = (self.daily_trades < self.config.MAX_TRADES_PER_DAY and not no_new_trade and vix_ok)
 
         # ---- Signal score ----
         bull_score = sum([cross_above_r1, is_bull_st, vwap_bull_ok, vol_ok, True])  # 5th = base
         bear_score = sum([cross_below_s1, is_bear_st, vwap_bear_ok, vol_ok, True])
-
         signal = None
 
         # ---- EXIT LOGIC (check first) ----
@@ -256,7 +243,6 @@ class StrategyEngine:
             self.trade_type = 0
             self.trade_entry = None
             self.trade_sl = None
-
         elif self.trade_type == -1 and st_flip_bull:
             pnl = self.trade_entry - spot
             self.daily_pnl += pnl
@@ -268,7 +254,6 @@ class StrategyEngine:
             self.trade_type = 0
             self.trade_entry = None
             self.trade_sl = None
-
         elif self.trade_type != 0 and force_exit_time:
             if self.trade_type == 1:
                 pnl = spot - self.trade_entry
@@ -296,7 +281,6 @@ class StrategyEngine:
             self.daily_trades += 1
             signal = 'SELL_PUT'
             bull_score = sum([True, is_bull_st, vwap_bull_ok, vol_ok, True])
-
         elif cross_below_s1 and is_bear_st and vwap_bear_ok and vol_ok and can_trade and self.trade_type != -1:
             if self.trade_type == 1:  # Close opposite
                 pnl = spot - self.trade_entry
