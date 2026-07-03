@@ -48,7 +48,7 @@ USE_VWAP_FILTER    = False
 USE_VOLUME_FILTER  = False
 VOLUME_MULTIPLIER  = 1.0
 USE_VIX_FILTER     = True
-VIX_MIN            = 12.0
+VIX_MIN            = 10.0
 VIX_MAX            = 25.0
 
 # Risk Management
