@@ -217,8 +217,10 @@ class StrategyEngine:
                            (current_hour == exit_h and current_min >= exit_m))
 
         # ---- Breakout detection ----
-        cross_above_r1 = spot > R1 and prev_close <= R1
-        cross_below_s1 = spot < S1 and prev_close >= S1
+        # cross_above_r1 = spot > R1 and prev_close <= R1
+        # cross_below_s1 = spot < S1 and prev_close >= S1
+        cross_above_r1 = spot > R1
+        cross_below_s1 = spot < S1
 
         # ---- SuperTrend flip detection ----
         st_flip_bear = st_dir == -1 and prev_st_dir == 1
