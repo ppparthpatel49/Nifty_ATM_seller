@@ -44,8 +44,8 @@ ST_PERIOD          = 7
 ST_MULTIPLIER      = 3.0
 
 # Filters
-USE_VWAP_FILTER    = True
-USE_VOLUME_FILTER  = True
+USE_VWAP_FILTER    = False
+USE_VOLUME_FILTER  = False
 VOLUME_MULTIPLIER  = 1.0
 USE_VIX_FILTER     = True
 VIX_MIN            = 12.0
